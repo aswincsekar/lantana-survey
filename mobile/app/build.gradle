@@ -7,11 +7,14 @@ android {
         applicationId 'org.atree.survey'
         minSdk 28
         targetSdk 32
-        versionCode 1
-        versionName '0.1'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        versionCode 7
+        versionName '0.7'
     }
 }
 dependencies {
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.20.0'
     implementation 'com.google.ar:core:1.48.0'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'junit:junit:4.13.2'
 }

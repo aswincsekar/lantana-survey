@@ -12,6 +12,10 @@
         <activity android:name=".FieldActivity" android:exported="true" android:screenOrientation="portrait">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
+        <receiver android:name=".JournalFileJob$Updated" android:exported="false">
+            <intent-filter><action android:name="android.intent.action.MY_PACKAGE_REPLACED"/></intent-filter>
+        </receiver>
+        <service android:name=".JournalFileJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false"/>
         <service android:name=".UploadJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false"/>
     </application>
 </manifest>

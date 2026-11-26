@@ -127,6 +127,7 @@ input:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  column-gap: 12px;
   width: 100%;
   text-align: left;
   background: transparent;
@@ -136,14 +137,25 @@ input:focus-visible {
   padding: 13px 0;
 }
 .row b,
-.row small {
+.row > span:first-child small {
   display: block;
 }
 .metric {
-  font:
-    26px "Google Sans",
-    Roboto,
-    sans-serif;
+  max-width: 42%;
+  text-align: right;
+  color: #454b55;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+.metric small {
+  font-size: 0.75rem;
+}
+.cover-value {
+  color: #202124;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .sub {
   color: #505968;
@@ -186,10 +198,9 @@ input:focus-visible {
 }
 .numbers b {
   display: block;
-  font:
-    28px "Google Sans",
-    Roboto,
-    sans-serif;
+  font-size: 1.25rem;
+  line-height: 1.3;
+  font-weight: 500;
 }
 .hint {
   background: #e8f0fe;
@@ -299,4 +310,32 @@ nav button[aria-current="true"] {
 }
 .numbers b {
   font-variant-numeric: tabular-nums;
+}
+
+.trial-masks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(98px, 1fr));
+  gap: 8px;
+}
+.trial-masks figure {
+  margin: 0;
+}
+.trial-masks figcaption {
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+.replay-frame {
+  display: block;
+  max-width: 100%;
+  max-height: 52vh;
+  margin: auto;
+}
+
+details {
+  margin: 14px 0;
+}
+summary {
+  cursor: pointer;
+  padding: 8px 0;
+  font-weight: 500;
 }

@@ -3,10 +3,10 @@ const $ = (id) => document.getElementById(id),
   main = $("main"),
   phone = typeof Field !== "undefined";
 let records = [],
-  previous = null,
   current = "",
   currentPage = "",
   timer,
+  receiveDepth,
   access = "";
 function el(tag, text, cls) {
   const n = document.createElement(tag);
@@ -27,6 +27,7 @@ function notice(text) {
 }
 function page(name) {
   currentPage = name;
+  receiveDepth = null;
   main.replaceChildren();
   $("nav").hidden = false;
   for (const id of ["journal", "map", "settings"])
@@ -61,18 +62,30 @@ function time(v) {
 function patchName(v) {
   return "Patch " + v.patch.slice(0, 6).toUpperCase();
 }
+function identityLabel(v) {
+  if (v.identity === "likely_lantana") return "Likely Lantana";
+  if (v.identity === "closeup_match") return "Possible Lantana";
+  if (v.identity === "unidentified") return "Lantana unconfirmed";
+  return "Species unchecked";
+}
 function row(v) {
   const b = button(main, "", () => detail(v.id), "row"),
     s = el("span");
   s.append(el("b", patchName(v) + " · " + v.phase), el("small", time(v)));
-  b.append(s, el("span", Math.round(v.cover) + "%", "metric"));
+  const metric = el("span", undefined, "metric");
+  if (v.photoCheck || v.cover == null) {
+    metric.textContent = identityLabel(v.photoCheck || v);
+  } else {
+    if (!v.identity) metric.append(el("small", "Legacy"), " ");
+    metric.append(el("span", Math.round(v.cover) + "%", "cover-value"));
+  }
+  b.append(s, metric);
 }
 async function home() {
   page("journal");
-  previous = null;
   const hero = el("section", undefined, "hero");
   hero.append(
-    el("h1", "Lantana field journal"),
+    el("h1", "Field journal"),
     el(
       "span",
       phone ? "Surveys saved on this phone" : "Survey monitoring dashboard",
@@ -81,8 +94,7 @@ async function home() {
   main.append(hero);
   if (phone) {
     const a = el("div", undefined, "actions");
-    button(a, "Scan a patch", () => Field.scan("", "Baseline"), "primary");
-    button(a, "Import photo", () => Field.pick());
+    button(a, "Scan plant", () => Field.scan("", "Baseline", ""), "primary");
     main.append(a);
   }
   main.append(el("h2", "Recent visits"));
@@ -118,28 +130,173 @@ function photo(frame, mask) {
   }
   return b;
 }
-function openScan() {
-  page("scan");
+function processingSweep() {
+  page("processing");
   $("nav").hidden = true;
-  const box = el("section", undefined, "screen");
-  box.innerHTML =
-    '<h1>Scan the patch</h1><p id="hint">Keep the base and canopy in view.</p><div id="live"></div><div class="progress"><i id="bar"></i></div>';
-  button(box, "Cancel scan", () => Field.cancel());
-  main.append(box);
+  main.append(el("h1", "Saving your observation…"));
 }
-function preview(frame, mask, percent, hint) {
-  if (currentPage !== "scan") return;
-  const p = photo(frame, mask);
-  if (previous) {
-    const ghost = el("img", undefined, "ghost");
-    ghost.src = "data:image/jpeg;base64," + previous.photo;
-    ghost.alt = "Previous visit framing guide";
-    p.append(ghost);
+
+function depthSection(stats, sweep, visit) {
+  const section = el("section");
+  section.append(el("h2", "Measured sweep depth"));
+  const pct = (100 * stats.validCells) / stats.totalCells;
+  section.append(
+    el(
+      "p",
+      stats.validCells
+        ? pct.toFixed(1) + "% of the saved depth overview has usable depth."
+        : "No usable depth in the overview. Move sideways with the patch in view and check AR setup under Connection.",
+      "sub",
+    ),
+  );
+  if (stats.sceneMedianM != null)
+    section.append(
+      el("p", "Median scene depth " + stats.sceneMedianM.toFixed(2) + " m"),
+    );
+  if (stats.observedProjectedAreaM2 != null)
+    section.append(
+      el(
+        "p",
+        "Observed projected Lantana area " +
+          stats.observedProjectedAreaM2.toFixed(2) +
+          " m² · " +
+          Math.round((100 * stats.supportedMaskCells) / stats.maskCells) +
+          "% of the predicted shrub has depth.",
+      ),
+    );
+  if (!sweep) return section;
+  section.append(
+    el(
+      "small",
+      sweep.depthFrames +
+        " of " +
+        sweep.count +
+        " frames captured depth. Amber is 0.5 m, blue is 5 m. Clear areas have no accepted reading.",
+    ),
+  );
+  const slider = el("input"),
+    view = el("div"),
+    label = el("small");
+  slider.type = "range";
+  slider.min = 0;
+  slider.max = sweep.count - 1;
+  slider.value = stats.frame;
+  slider.setAttribute("aria-label", "Depth replay frame");
+  function select() {
+    const i = Number(slider.value),
+      jpeg = Field.sweepFrame(visit.id, i);
+    const overlay = Field.sweepDepth(
+      visit.id,
+      i,
+      sweep.gridWidth,
+      sweep.gridHeight,
+    );
+    label.textContent =
+      "Frame " +
+      (i + 1) +
+      " of " +
+      sweep.count +
+      (overlay ? " · depth recorded" : " · no usable depth");
+    view.replaceChildren();
+    if (jpeg) {
+      const image = photo(jpeg, overlay);
+      if (overlay) image.querySelector(".mask").alt = "Measured depth";
+      view.append(image);
+    }
   }
-  $("live").replaceChildren(p);
-  $("bar").style.width = percent + "%";
-  $("hint").textContent = hint;
+  slider.oninput = select;
+  select();
+  section.append(view, label, slider);
+  return section;
 }
+
+function photoControls(visit, view) {
+  const section = el("section"),
+    actions = el("div", undefined, "actions");
+  const original = view.querySelector("img"),
+    mask = view.querySelector(".mask");
+  const status = el("small");
+  status.setAttribute("role", "status");
+  let visible = false,
+    loading = false,
+    depth = "",
+    showMask = true;
+  let outline;
+  if (mask)
+    outline = button(actions, "Hide outline", () => {
+      showMask = !showMask;
+      mask.hidden = !showMask;
+      outline.textContent = showMask ? "Hide outline" : "Show outline";
+    });
+  if (phone) {
+    const toggle = button(actions, "Show depth map", () => {
+      visible = !visible;
+      render();
+      if (visible && !loading && !depth) {
+        loading = true;
+        status.textContent = "Preparing depth map…";
+        Field.photoDepth(visit.id);
+      }
+    });
+    toggle.setAttribute("aria-pressed", "false");
+    function render() {
+      const show = visible && !!depth;
+      original.src = show
+        ? "data:image/png;base64," + depth
+        : "data:image/jpeg;base64," + visit.photo;
+      original.alt = show
+        ? "Relative depth of this plant photo"
+        : "Plant photo";
+      if (mask) {
+        mask.hidden = show || !showMask;
+        outline.hidden = show;
+      }
+      toggle.textContent = visible ? "Hide depth map" : "Show depth map";
+      toggle.setAttribute("aria-pressed", String(visible));
+      status.textContent = visible
+        ? show
+          ? "Amber is nearer. Blue is farther."
+          : "Preparing depth map…"
+        : "";
+    }
+    receiveDepth = (encoded) => {
+      loading = false;
+      depth = encoded;
+      if (!encoded) {
+        const wasVisible = visible;
+        visible = false;
+        render();
+        if (wasVisible)
+          status.textContent = "Depth map unavailable. Tap to try again.";
+      } else if (visible) render();
+    };
+  }
+  section.append(actions, status);
+  return section;
+}
+
+function photoDepthResult(id, encoded) {
+  if (currentPage === "detail" && id === current && receiveDepth)
+    receiveDepth(encoded);
+}
+
+function identificationHelp(v) {
+  if (v.identity === "closeup_match")
+    return "The close-up resembles Lantana. A wider view is needed to estimate cover.";
+  if (v.identity === "unidentified") {
+    if (v.identificationReason === "blur")
+      return "The leaves were out of focus. Try again with the phone held steady.";
+    if (v.identificationReason === "inconsistent")
+      return "Only some views resembled Lantana. Try again with the same plant centred.";
+    return "There wasn’t enough visual evidence to identify Lantana. Try a clear view of the leaves or flowers.";
+  }
+  if (v.identity === "likely_lantana")
+    return v.review
+      ? "Some views were unclear. Check the highlighted outline."
+      : "The outline shows where the app found likely Lantana.";
+  return "This older observation has no species check.";
+}
+
 function importing() {
   page("import");
   main.append(el("h1", "Analysing photograph…"));
@@ -151,45 +308,69 @@ async function detail(id) {
     const [v, all] = await Promise.all([read(id), list()]);
     if (currentPage !== "detail" || current !== id) return;
     records = all;
+    const result = v.photoCheck || v;
     main.append(
-      el("h1", patchName(v)),
-      el("p", v.phase + " · " + time(v), "sub"),
+      el(
+        "h1",
+        result.identity === "unidentified"
+          ? "Couldn’t confirm Lantana"
+          : identityLabel(result),
+      ),
+      el("p", "Saved · " + time(v), "sub"),
+      el("p", identificationHelp(result)),
     );
-    const view = photo(v.photo, v.mask);
-    main.append(view);
-    const a = el("div", undefined, "actions");
-    const toggle = button(a, "Hide outline", () => {
-      const m = view.querySelector(".mask");
-      m.style.display = m.style.display === "none" ? "block" : "none";
-      toggle.textContent =
-        m.style.display === "none" ? "Show outline" : "Hide outline";
-    });
-    main.append(a);
+    const view = photo(
+      v.photo,
+      v.cover == null || v.photoCheck ? null : v.mask,
+    );
+    main.append(view, photoControls(v, view));
+    const info = el("details");
+    info.append(
+      el("summary", "Visit details"),
+      el("p", patchName(v) + " · " + v.phase),
+    );
+    if (v.restoredFromUsb)
+      info.append(el("small", "Recovered from the local archive"));
+    const depth = v.depth || v.sweepTrial?.depth;
+    if (depth) {
+      info.addEventListener("toggle", () => {
+        if (info.open && !info.querySelector(".measured-depth")) {
+          const measured = depthSection(depth, v.sweepTrial, v);
+          measured.classList.add("measured-depth");
+          info.append(measured);
+        }
+      });
+    }
+    if (v.photoCheck) {
+      const legacy = el("details");
+      legacy.append(
+        el("summary", "Original pilot estimate"),
+        photo(v.photo, v.mask),
+        el("small", v.cover.toFixed(1) + "% visible cover · species unchecked"),
+      );
+      info.append(legacy);
+    }
+    if (v.closeup) info.append(el("h2", "Close-up"), photo(v.closeup, null));
     const numbers = el("div", undefined, "numbers");
     for (const [label, value] of [
-      ["Visible Lantana cover", v.cover.toFixed(1) + "%"],
       [
-        "Canopy edge height",
-        v.height == null ? "Unavailable" : v.height.toFixed(2) + " m",
+        "Visible Lantana cover",
+        result.cover == null ? null : result.cover.toFixed(1) + "%",
+      ],
+      [
+        "Canopy height",
+        v.photoCheck || v.height == null ? null : v.height.toFixed(2) + " m",
       ],
     ]) {
+      if (value === null) continue;
       const n = el("div");
       n.append(el("small", label), el("b", value));
       numbers.append(n);
     }
-    main.append(numbers);
-    main.append(
+    if (numbers.children.length) main.append(numbers);
+    info.append(
       el(
-        "p",
-        v.review
-          ? "Low-quality or inconsistent view. Review the outline and repeat the scan if needed."
-          : "Experimental species prediction. Review the outline before field use.",
-        "hint",
-      ),
-    );
-    main.append(
-      el(
-        "p",
+        "small",
         v.lat == null
           ? "Location unavailable"
           : v.lat.toFixed(5) +
@@ -197,24 +378,11 @@ async function detail(id) {
               v.lon.toFixed(5) +
               " · GPS ±" +
               Math.round(v.accuracy) +
-              " m" +
-              (v.heading == null
-                ? ""
-                : " · " + Math.round(v.heading) + "° magnetic"),
-        "sub",
-      ),
-      el(
-        "small",
-        v.source +
-          " · " +
-          v.frames +
-          " frame" +
-          (v.frames === 1 ? "" : "s") +
-          " · " +
-          v.model,
+              " m",
       ),
     );
-    if (v.biomass)
+    main.append(info);
+    if (!v.photoCheck && v.biomass)
       main.append(
         el(
           "p",
@@ -244,12 +412,28 @@ async function detail(id) {
         pair,
         el(
           "p",
-          (v.cover - base.cover).toFixed(1) +
-            " percentage points of visible cover",
+          !v.photoCheck &&
+            !base.photoCheck &&
+            v.cover != null &&
+            base.cover != null &&
+            v.model === base.model
+            ? (v.cover - base.cover).toFixed(1) +
+                " percentage points of visible cover"
+            : "Cover change requires two measured visits using the same model.",
         ),
       );
     }
     if (phone) {
+      if (
+        result.identity === "unidentified" ||
+        result.identity === "closeup_match"
+      )
+        button(
+          main,
+          "Try another view",
+          () => Field.scan(v.patch, v.phase, ""),
+          "primary",
+        );
       const stages = el("select");
       stages.setAttribute("aria-label", "Revisit stage");
       for (const s of ["After clearance", "Regrowth", "Baseline"])
@@ -258,14 +442,13 @@ async function detail(id) {
       actions.append(stages);
       button(
         actions,
-        "Rescan this patch",
+        "Record a follow-up",
         () => {
-          previous = v;
-          Field.scan(v.patch, stages.value);
+          Field.scan(v.patch, stages.value, v.id);
         },
         "primary",
       );
-      main.append(actions);
+      info.append(actions);
     }
   } catch (e) {
     notice("Unable to open this visit.");
@@ -327,8 +510,10 @@ async function map() {
 }
 function settings() {
   page("settings");
-  main.append(el("h1", "Dashboard connection"));
+  main.append(el("h1", phone ? "Settings" : "Dashboard connection"));
   if (phone) {
+    button(main, "Choose a saved photo", () => Field.pick());
+    main.append(el("h2", "Dashboard connection"));
     main.append(
       el(
         "p",
@@ -336,7 +521,11 @@ function settings() {
       ),
     );
     button(main, "Configure sync", () => Field.setup());
-    button(main, "Test model on sample photo", () => Field.example());
+    const advanced = el("details");
+    advanced.append(el("summary", "Advanced"));
+    button(advanced, "Test the sample photo", () => Field.example());
+    button(advanced, "Set up AR measurements", () => Field.setupDepth());
+    main.append(advanced);
   } else {
     const input = el("input");
     input.type = "password";
@@ -356,7 +545,7 @@ function settings() {
     el("h2", "Model and imagery"),
     el(
       "p",
-      "Pilot model trained on sparse labels from ten public photographs. Local field accuracy and biomass calibration are pending.",
+      "Offline species recognition uses Indian plant observations. The experimental mask uses sparse annotations from ten photographs. Forest validation and biomass calibration are pending.",
     ),
     el(
       "small",
@@ -369,7 +558,12 @@ function exampleResult(frame, mask, cover) {
   main.append(
     el("h1", "Example prediction"),
     photo(frame, mask),
-    el("p", cover.toFixed(1) + "% predicted visible cover"),
+    el(
+      "p",
+      cover == null
+        ? "Species unidentified"
+        : cover.toFixed(1) + "% predicted visible cover",
+    ),
     el(
       "small",
       "Training image · Maina Tudu, CC0. This example is excluded from survey records.",
@@ -383,5 +577,7 @@ function back() {
 $("journal").onclick = home;
 $("map").onclick = map;
 $("settings").onclick = settings;
-if (phone) home();
-else settings();
+if (phone) {
+  $("settings").textContent = "Settings";
+  home();
+} else settings();

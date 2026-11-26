@@ -8,21 +8,23 @@ import android.hardware.Camera;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.media.Image;
-import android.opengl.*;
 import android.os.Handler;
 import android.os.SystemClock;
+import android.view.Surface;
 import com.google.ar.core.*;
 import com.google.ar.core.exceptions.NotYetAvailableException;
 import java.nio.*;
 import java.util.*;
 
-/** All camera, inference and GL calls are confined to the survey worker thread. */
+/** Camera and GL run on the survey worker. At most one RGB sample is in inference. */
 @SuppressWarnings("deprecation")
 final class SweepCamera implements AutoCloseable {
   interface Listener {
     void frame(Segmenter.Prediction p);
 
     void error(String reason);
+
+    void ready(int width, int height);
   }
 
   final Context context;
@@ -31,69 +33,68 @@ final class SweepCamera implements AutoCloseable {
   final Listener listener;
   Session ar;
   Camera camera;
-  SurfaceTexture surface;
-  EGLDisplay display;
-  EGLContext gl;
-  EGLSurface pbuffer;
-  int texture, rotation;
-  boolean closed;
-  long lastFrame;
+  final SurfaceTexture target;
+  final Handler analysis;
+  ArPreview preview;
+  int rotation;
+  volatile boolean closed;
+  boolean pending;
+  long lastFrame, lastDepth, drawn;
+  Camera.Size regularSize;
+  String depthStatus = "Waiting for camera tracking";
 
-  SweepCamera(Context context, Handler handler, Segmenter model, Listener listener) {
+  SweepCamera(
+      Context context,
+      Handler handler,
+      Handler analysis,
+      SurfaceTexture target,
+      Segmenter model,
+      Listener listener) {
     this.context = context;
     this.handler = handler;
+    this.analysis = analysis;
+    this.target = target;
     this.model = model;
     this.listener = listener;
   }
 
   void start() throws Exception {
-    display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
-    int[] count = new int[1];
-    EGL14.eglInitialize(display, new int[1], 0, new int[1], 0);
-    EGLConfig[] configs = new EGLConfig[1];
-    int[] attrs = {
-      EGL14.EGL_RENDERABLE_TYPE, 4, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT, EGL14.EGL_NONE
-    };
-    if (!EGL14.eglChooseConfig(display, attrs, 0, configs, 0, 1, count, 0) || count[0] == 0)
-      throw new Exception("Camera display unavailable");
-    gl =
-        EGL14.eglCreateContext(
-            display,
-            configs[0],
-            EGL14.EGL_NO_CONTEXT,
-            new int[] {EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE},
-            0);
-    pbuffer =
-        EGL14.eglCreatePbufferSurface(
-            display,
-            configs[0],
-            new int[] {EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE},
-            0);
-    EGL14.eglMakeCurrent(display, pbuffer, pbuffer, gl);
-    int[] textures = new int[1];
-    GLES20.glGenTextures(1, textures, 0);
-    texture = textures[0];
-    GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texture);
-    GLES20.glTexParameteri(
-        GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
-    GLES20.glTexParameteri(
-        GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
     try {
       ar = new Session(context);
-      if (!ar.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) throw new IllegalStateException();
+      if (!ar.isDepthModeSupported(Config.DepthMode.AUTOMATIC))
+        throw new UnsupportedOperationException("Depth unsupported");
       Config config = new Config(ar);
       config.setDepthMode(Config.DepthMode.AUTOMATIC).setFocusMode(Config.FocusMode.AUTO);
       ar.configure(config);
-      ar.setCameraTextureName(texture);
+
       CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
       rotation =
           manager
               .getCameraCharacteristics(ar.getCameraConfig().getCameraId())
               .get(CameraCharacteristics.SENSOR_ORIENTATION);
+      android.util.Size size = ar.getCameraConfig().getImageSize();
+      int w = size.getWidth(), h = size.getHeight();
+      preview = new ArPreview();
+      preview.configure(w, h, rotation);
+      target.setDefaultBufferSize(preview.width, preview.height);
+      preview.open(target);
+      ar.setCameraTextureName(preview.texture);
+      ar.setDisplayGeometry(Surface.ROTATION_0, preview.width, preview.height);
       ar.resume();
+      listener.ready(preview.width, preview.height);
       handler.post(this::arFrame);
       return;
     } catch (Exception | LinkageError unavailable) {
+      depthStatus =
+          unavailable
+                      instanceof
+                      com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException
+                  || unavailable
+                      instanceof com.google.ar.core.exceptions.UnavailableApkTooOldException
+              ? "Depth unavailable. Set up Google Play Services for AR under Connection."
+              : "Depth unavailable on this camera session.";
+      android.util.Log.i(
+          "Fieldbook", "Depth session unavailable: " + unavailable.getClass().getSimpleName());
       releaseAR();
     }
     startRegular();
@@ -107,6 +108,10 @@ final class SweepCamera implements AutoCloseable {
       }
       ar.close();
       ar = null;
+    }
+    if (preview != null) {
+      preview.close();
+      preview = null;
     }
   }
 
@@ -128,29 +133,87 @@ final class SweepCamera implements AutoCloseable {
     params.setPreviewFormat(ImageFormat.NV21);
     if (params.getSupportedFocusModes().contains(Camera.Parameters.FOCUS_MODE_CONTINUOUS_VIDEO))
       params.setFocusMode(Camera.Parameters.FOCUS_MODE_CONTINUOUS_VIDEO);
+    // Use a supported 30 Hz range when the camera offers one.
+    int[] preferred = null;
+    for (int[] range : params.getSupportedPreviewFpsRange()) {
+      if (range[1] == 30000 && (preferred == null || range[0] > preferred[0])) preferred = range;
+    }
+    if (preferred != null) params.setPreviewFpsRange(preferred[0], preferred[1]);
     camera.setParameters(params);
-    surface = new SurfaceTexture(texture);
-    camera.setPreviewTexture(surface);
-    camera.setPreviewCallback(
+    regularSize = size;
+    camera.setDisplayOrientation(rotation);
+    camera.setPreviewTexture(target);
+    camera.startPreview();
+    listener.ready(
+        rotation % 180 == 0 ? size.width : size.height,
+        rotation % 180 == 0 ? size.height : size.width);
+    requestRegularFrame();
+  }
+
+  void requestRegularFrame() {
+    if (closed || camera == null || pending) return;
+    camera.setOneShotPreviewCallback(
         (bytes, c) -> {
-          if (closed || SystemClock.elapsedRealtime() - lastFrame < 350) return;
-          lastFrame = SystemClock.elapsedRealtime();
+          if (closed || pending || bytes == null) return;
+          int w = regularSize.width, h = regularSize.height;
+          long time = SystemClock.elapsedRealtimeNanos();
+          submit(
+              () ->
+                  convert(
+                      w,
+                      h,
+                      (x, y) -> {
+                        int uv = w * h + (y / 2) * w + (x & ~1);
+                        return rgb(bytes[y * w + x], bytes[uv + 1], bytes[uv]);
+                      }),
+              time,
+              null);
+        });
+  }
+
+  interface ImageSource {
+    Bitmap read();
+  }
+
+  void submit(ImageSource source, long timestamp, SweepGeometry geometry) {
+    pending = true;
+    lastFrame = SystemClock.elapsedRealtime();
+    analysis.post(
+        () -> {
+          if (closed) return;
           try {
-            listener.frame(
-                model.predict(
-                    orient(
-                        convert(
-                            size.width,
-                            size.height,
-                            (x, y) -> {
-                              int uv = size.width * size.height + (y / 2) * size.width + (x & ~1);
-                              return rgb(bytes[y * size.width + x], bytes[uv + 1], bytes[uv]);
-                            }))));
+            Segmenter.Prediction pred = model.predict(orient(source.read()));
+            pred.jpeg = SweepTrial.jpeg(pred.frame);
+            pred.cameraTime = timestamp;
+            pred.geometry = geometry;
+            handler.post(
+                () -> {
+                  if (closed) return;
+                  pending = false;
+                  try {
+                    if (pred.eligible && geometry != null && geometry.valid >= 25) {
+                      pred.depthSupported =
+                          geometry
+                              .measurements(pred.probabilities, true)
+                              .has("observedProjectedAreaM2");
+                      if (ar != null) pred.height = height(pred);
+                    }
+                    listener.frame(pred);
+                    if (!closed && camera != null)
+                      handler.postDelayed(
+                          this::requestRegularFrame,
+                          Math.max(0, 350 - (SystemClock.elapsedRealtime() - lastFrame)));
+                  } catch (Exception e) {
+                    listener.error("Could not analyse camera frame");
+                  }
+                });
           } catch (Exception e) {
-            listener.error("Camera analysis interrupted");
+            handler.post(
+                () -> {
+                  if (!closed) listener.error("Camera analysis interrupted");
+                });
           }
         });
-    camera.startPreview();
   }
 
   interface Pixel {
@@ -193,29 +256,40 @@ final class SweepCamera implements AutoCloseable {
     if (closed || ar == null) return;
     try {
       Frame f = ar.update();
-      if (SystemClock.elapsedRealtime() - lastFrame >= 350) {
+      if (f.getTimestamp() != 0 && drawn != f.getTimestamp()) {
+        preview.draw(f);
+        drawn = f.getTimestamp();
+      }
+      if (!pending && SystemClock.elapsedRealtime() - lastFrame >= 350) {
         try (Image im = f.acquireCameraImage()) {
-          Image.Plane[] planes = im.getPlanes();
-          ByteBuffer y = planes[0].getBuffer(),
-              u = planes[1].getBuffer(),
-              v = planes[2].getBuffer();
-          Bitmap raw =
-              convert(
-                  im.getWidth(),
-                  im.getHeight(),
-                  (col, row) ->
-                      rgb(
-                          sample(planes[0], y, col, row),
-                          sample(planes[1], u, col / 2, row / 2),
-                          sample(planes[2], v, col / 2, row / 2)));
-          Segmenter.Prediction pred = model.predict(orient(raw));
-          pred.height = height(f, pred);
-          listener.frame(pred);
-          lastFrame = SystemClock.elapsedRealtime();
+          int w = im.getWidth(), h = im.getHeight();
+          PlaneCopy y = new PlaneCopy(im.getPlanes()[0]),
+              u = new PlaneCopy(im.getPlanes()[1]),
+              v = new PlaneCopy(im.getPlanes()[2]);
+          SweepGeometry g =
+              SweepGeometry.read(f, rotation, model.gridWidth, model.gridHeight, lastDepth);
+          if (g != null && g.depthTime != 0) lastDepth = g.depthTime;
+          depthStatus =
+              g == null
+                  ? "Move slowly sideways to establish tracking."
+                  : g.valid == 0
+                      ? "Move slowly sideways to collect depth."
+                      : "Usable depth: "
+                          + Math.round(100.0 * g.valid / g.mm.length)
+                          + "% of this frame";
+          submit(
+              () ->
+                  convert(
+                      w,
+                      h,
+                      (x, row) -> rgb(y.get(x, row), u.get(x / 2, row / 2), v.get(x / 2, row / 2))),
+              im.getTimestamp(),
+              g);
         }
       }
     } catch (NotYetAvailableException wait) {
     } catch (Exception | LinkageError e) {
+      depthStatus = "Depth tracking interrupted. Using the regular camera.";
       releaseAR();
       try {
         startRegular();
@@ -224,12 +298,28 @@ final class SweepCamera implements AutoCloseable {
       }
       return;
     }
-    if (!closed) handler.postDelayed(this::arFrame, 25);
+    if (!closed) handler.post(this::arFrame);
   }
 
-  Double height(Frame frame, Segmenter.Prediction pred) {
-    if (frame.getCamera().getTrackingState() != TrackingState.TRACKING) return null;
-    Pose pose = frame.getCamera().getPose();
+  static final class PlaneCopy {
+    final byte[] bytes;
+    final int row, pixel;
+
+    PlaneCopy(Image.Plane plane) {
+      ByteBuffer data = plane.getBuffer().duplicate();
+      bytes = new byte[data.remaining()];
+      data.get(bytes);
+      row = plane.getRowStride();
+      pixel = plane.getPixelStride();
+    }
+
+    byte get(int x, int y) {
+      return bytes[y * row + x * pixel];
+    }
+  }
+
+  Double height(Segmenter.Prediction pred) {
+    Pose pose = pred.geometry.pose;
     List<Plane> grounds = new ArrayList<>();
     for (Plane p : ar.getAllTrackables(Plane.class)) {
       float below = pose.ty() - p.getCenterPose().ty();
@@ -240,53 +330,22 @@ final class SweepCamera implements AutoCloseable {
           && below < 2.4) grounds.add(p);
     }
     if (grounds.isEmpty()) return null;
-    try (Image depth = frame.acquireRawDepthImage16Bits();
-        Image conf = frame.acquireRawDepthConfidenceImage()) {
-      if (Math.abs(frame.getTimestamp() - depth.getTimestamp()) > 150000000L) return null;
-      Image.Plane dp = depth.getPlanes()[0], cp = conf.getPlanes()[0];
-      ByteBuffer db = dp.getBuffer().order(ByteOrder.LITTLE_ENDIAN), cb = cp.getBuffer();
-      CameraIntrinsics ci = frame.getCamera().getImageIntrinsics();
-      int[] dims = ci.getImageDimensions();
-      float[] fl = ci.getFocalLength(), pp = ci.getPrincipalPoint();
-      List<Double> heights = new ArrayList<>();
-      for (int j = 0; j < depth.getHeight(); j += 2)
-        for (int i = 0; i < depth.getWidth(); i += 2) {
-          if ((sample(cp, cb, i, j) & 255) < 190) continue;
-          float z = (db.getShort(j * dp.getRowStride() + i * dp.getPixelStride()) & 65535) / 1000f;
-          if (z < .5 || z > 5) continue;
-          float[] pixel = new float[2];
-          frame.transformCoordinates2d(
-              Coordinates2d.TEXTURE_NORMALIZED,
-              new float[] {(i + .5f) / depth.getWidth(), (j + .5f) / depth.getHeight()},
-              Coordinates2d.IMAGE_PIXELS,
-              pixel);
-          float x = pixel[0] / dims[0], y = pixel[1] / dims[1];
-          if (x < 0 || y < 0 || x >= 1 || y >= 1) continue;
-          float nx = rotation == 90 ? 1 - y : rotation == 270 ? y : rotation == 180 ? 1 - x : x;
-          float ny = rotation == 90 ? x : rotation == 270 ? 1 - x : rotation == 180 ? 1 - y : y;
-          float[][] probs = pred.probabilities;
-          if (probs[Math.min(probs.length - 1, (int) (ny * probs.length))][
-                  Math.min(probs[0].length - 1, (int) (nx * probs[0].length))]
-              < .8) continue;
-          float[] world =
-              pose.transformPoint(
-                  new float[] {
-                    (pixel[0] - pp[0]) * z / fl[0], -(pixel[1] - pp[1]) * z / fl[1], -z
-                  });
-          for (Plane g : grounds) {
-            float gy = g.getCenterPose().ty();
-            if (g.isPoseInPolygon(Pose.makeTranslation(world[0], gy, world[2])) && world[1] > gy) {
-              heights.add((double) (world[1] - gy));
-              break;
-            }
-          }
+    SweepGeometry g = pred.geometry;
+    List<Double> heights = new ArrayList<>();
+    for (int i = 0; i < g.mm.length; i++) {
+      if (g.mm[i] == 0 || pred.probabilities[i / g.width][i % g.width] < .8f) continue;
+      float[] point = g.worldPoint(i);
+      for (Plane ground : grounds) {
+        float gy = ground.getCenterPose().ty();
+        if (point[1] > gy && ground.isPoseInPolygon(Pose.makeTranslation(point[0], gy, point[2]))) {
+          heights.add((double) (point[1] - gy));
+          break;
         }
-      if (heights.size() < 25) return null;
-      Collections.sort(heights);
-      return heights.get((int) (.95 * (heights.size() - 1)));
-    } catch (NotYetAvailableException unavailable) {
-      return null;
+      }
     }
+    if (heights.size() < 25) return null;
+    Collections.sort(heights);
+    return heights.get((int) (.95 * (heights.size() - 1)));
   }
 
   public void close() {
@@ -296,14 +355,6 @@ final class SweepCamera implements AutoCloseable {
       camera.stopPreview();
       camera.release();
     }
-    if (surface != null) surface.release();
     releaseAR();
-    if (display != null) {
-      EGL14.eglMakeCurrent(
-          display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT);
-      if (pbuffer != null) EGL14.eglDestroySurface(display, pbuffer);
-      if (gl != null) EGL14.eglDestroyContext(display, gl);
-      EGL14.eglTerminate(display);
-    }
   }
 }

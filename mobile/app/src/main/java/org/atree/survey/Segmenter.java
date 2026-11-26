@@ -14,7 +14,9 @@ final class Segmenter implements AutoCloseable {
   final OrtEnvironment env = OrtEnvironment.getEnvironment();
   final OrtSession model;
   final String version;
+  final int gridWidth, gridHeight;
   static final int SIDE = 224;
+  static final float MASK_THRESHOLD = .75f;
   static final float[] MEAN = {.485f, .456f, .406f}, STD = {.229f, .224f, .225f};
 
   Segmenter(Context context) throws Exception {
@@ -22,19 +24,27 @@ final class Segmenter implements AutoCloseable {
         OrtSession.SessionOptions opts = new OrtSession.SessionOptions()) {
       byte[] bytes = new byte[in.available()];
       new java.io.DataInputStream(in).readFully(bytes);
-      StringBuilder id = new StringBuilder("squeezenet-");
+      StringBuilder id = new StringBuilder("field-v2-");
       for (byte b : MessageDigest.getInstance("SHA-256").digest(bytes))
         id.append(String.format(Locale.US, "%02x", b));
       version = id.substring(0, 22);
       opts.setIntraOpNumThreads(2);
       model = env.createSession(bytes, opts);
+      long[] shape = ((TensorInfo) model.getOutputInfo().get("mask").getInfo()).getShape();
+      gridWidth = Math.toIntExact(shape[3]);
+      gridHeight = Math.toIntExact(shape[2]);
     }
   }
 
   static final class Prediction {
     Bitmap frame, mask;
-    double cover, sharpness, ambiguous;
+    byte[] jpeg;
+    double cover, sharpness, ambiguous, speciesScore;
     Double height;
+    boolean eligible, depthSupported;
+    SweepGeometry geometry;
+    long cameraTime;
+    int sweepIndex;
     float[][] probabilities;
     int[] gray;
   }
@@ -60,7 +70,9 @@ final class Segmenter implements AutoCloseable {
     try (OnnxTensor tensor =
             OnnxTensor.createTensor(env, FloatBuffer.wrap(input), new long[] {1, 3, SIDE, SIDE});
         OrtSession.Result result = model.run(Collections.singletonMap("data", tensor))) {
-      p.probabilities = ((float[][][][]) result.get(0).getValue())[0][0];
+      p.probabilities = ((float[][][][]) result.get("mask").get().getValue())[0][0];
+      p.speciesScore = ((OnnxTensor) result.get("species_score").get()).getFloatBuffer().get(0);
+      p.eligible = ((boolean[][][][]) result.get("eligible").get().getValue())[0][0][0][0];
     }
     int h = p.probabilities.length, w = p.probabilities[0].length;
     int[] overlay = new int[w * h];
@@ -72,7 +84,7 @@ final class Segmenter implements AutoCloseable {
     for (int y = 0; y < h; y++)
       for (int x = 0; x < w; x++) {
         float score = p.probabilities[y][x];
-        if (score >= .5) {
+        if (p.eligible && score >= MASK_THRESHOLD) {
           overlay[y * w + x] = 0xAA4285F4;
           foreground++;
         }
@@ -80,13 +92,13 @@ final class Segmenter implements AutoCloseable {
       }
     p.mask = Bitmap.createBitmap(overlay, w, h, Bitmap.Config.ARGB_8888);
     p.cover = 100.0 * foreground / (w * h);
+    p.eligible &= foreground > 0 && p.sharpness >= 5;
     p.ambiguous = (double) uncertain / (w * h);
     return p;
   }
 
   /** Align neighbouring thumbnails by translation, then compare masks in their shared region. */
-  static double agreement(Prediction a, Prediction b) {
-    int h = a.probabilities.length, w = a.probabilities[0].length;
+  static int[] translation(int[] first, int[] second, int w, int h) {
     int bx = 0, by = 0;
     double best = Double.MAX_VALUE;
     for (int dy = -4; dy <= 4; dy++)
@@ -94,7 +106,7 @@ final class Segmenter implements AutoCloseable {
         int error = 0, count = 0;
         for (int y = 4; y < h - 4; y += 2)
           for (int x = 4; x < w - 4; x += 2) {
-            error += Math.abs(a.gray[y * w + x] - b.gray[(y + dy) * w + x + dx]);
+            error += Math.abs(first[y * w + x] - second[(y + dy) * w + x + dx]);
             count++;
           }
         double mae = (double) error / count + .01 * (Math.abs(dx) + Math.abs(dy));
@@ -104,11 +116,19 @@ final class Segmenter implements AutoCloseable {
           by = dy;
         }
       }
-    if (best > 22) return -1;
+    return best > 22 ? null : new int[] {bx, by};
+  }
+
+  static double agreement(Prediction a, Prediction b) {
+    int h = a.probabilities.length, w = a.probabilities[0].length;
+    int[] delta = translation(a.gray, b.gray, w, h);
+    if (delta == null) return -1;
+    int bx = delta[0], by = delta[1];
     int intersection = 0, union = 0;
     for (int y = Math.max(0, -by); y < Math.min(h, h - by); y++)
       for (int x = Math.max(0, -bx); x < Math.min(w, w - bx); x++) {
-        boolean before = a.probabilities[y][x] >= .5, after = b.probabilities[y + by][x + bx] >= .5;
+        boolean before = a.probabilities[y][x] >= MASK_THRESHOLD,
+            after = b.probabilities[y + by][x + bx] >= MASK_THRESHOLD;
         if (before || after) union++;
         if (before && after) intersection++;
       }
