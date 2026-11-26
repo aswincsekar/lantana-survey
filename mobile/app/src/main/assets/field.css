@@ -1,0 +1,302 @@
+@font-face {
+  font-family: "Google Sans";
+  src: url("google-sans.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: #f8faff;
+  color: #202124;
+  font:
+    16px/1.48 "Google Sans",
+    Roboto,
+    Arial,
+    sans-serif;
+}
+header,
+main,
+nav {
+  max-width: 850px;
+  margin: auto;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #d8dfe9;
+  padding: 12px 20px;
+}
+header strong {
+  font:
+    600 24px "Google Sans",
+    Roboto,
+    sans-serif;
+}
+header span,
+small {
+  font-size: 13px;
+  color: #454b55;
+}
+main {
+  padding: 22px 18px 84px;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0 0 12px;
+}
+h1,
+h2 {
+  font:
+    500 34px/1.15 "Google Sans",
+    Roboto,
+    sans-serif;
+}
+h2 {
+  font-size: 25px;
+  padding-top: 16px;
+}
+h3 {
+  font-size: 17px;
+}
+button,
+select,
+input {
+  font: inherit;
+}
+button,
+select {
+  border: 1px solid #aab3c2;
+  background: #ffffff;
+  color: #202124;
+  border-radius: 24px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 3px solid #174ea6;
+}
+.primary {
+  background: #0b57d0;
+  color: white;
+  border-color: #0b57d0;
+}
+.hero {
+  position: relative;
+  background: #d3e3fd url(shrub.jpg) right 44% / auto 150% no-repeat;
+  border-radius: 12px;
+  overflow: hidden;
+  color: #082e63;
+  padding: 48px 38% 24px 20px;
+}
+.hero:before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    #d3e3fd 0%,
+    #d3e3fd 40%,
+    #d3e3fdeb 54%,
+    transparent 84%
+  );
+}
+.hero > * {
+  position: relative;
+}
+.hero h1 {
+  font-size: clamp(30px, 6vw, 40px);
+  letter-spacing: -0.035em;
+  margin-bottom: 6px;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #d8dfe9;
+  border-radius: 0;
+  padding: 13px 0;
+}
+.row b,
+.row small {
+  display: block;
+}
+.metric {
+  font:
+    26px "Google Sans",
+    Roboto,
+    sans-serif;
+}
+.sub {
+  color: #505968;
+}
+.sheet {
+  padding: 15px 0;
+  border-bottom: 1px solid #d1d9e6;
+}
+.photo {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #182331;
+  min-height: 48px;
+}
+.photo img {
+  width: 100%;
+  display: block;
+}
+.photo img.mask,
+.photo img.ghost {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.ghost {
+  opacity: 0.25;
+  object-fit: contain;
+}
+.screen {
+  max-width: 540px;
+  margin: auto;
+}
+.numbers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 16px 0;
+}
+.numbers b {
+  display: block;
+  font:
+    28px "Google Sans",
+    Roboto,
+    sans-serif;
+}
+.hint {
+  background: #e8f0fe;
+  border-left: 3px solid #4285f4;
+  padding: 10px 12px;
+}
+.progress {
+  height: 5px;
+  background: #d3e3fd;
+}
+.progress i {
+  display: block;
+  height: 100%;
+  background: #1a73e8;
+}
+.map {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  background: #eff5ff;
+  border: 1px solid #c6d6f3;
+}
+.map line {
+  stroke: #c5d4e5;
+  stroke-width: 1;
+}
+.map circle {
+  fill: #1a73e8;
+  stroke: white;
+  stroke-width: 2;
+}
+.map text {
+  font:
+    12px "Google Sans",
+    Roboto,
+    Arial;
+  fill: #243247;
+}
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.pair img {
+  width: 100%;
+  border-radius: 6px;
+}
+nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  background: #f0f4fa;
+  border-top: 1px solid #d8dfe9;
+  padding: 6px;
+}
+nav button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+}
+nav button[aria-current="true"] {
+  background: #c2e7ff;
+  font-weight: bold;
+}
+#notice:not(:empty) {
+  position: fixed;
+  bottom: 72px;
+  background: #25364a;
+  color: white;
+  padding: 12px;
+  left: 5%;
+  right: 5%;
+  border-radius: 8px;
+}
+input {
+  width: 100%;
+  padding: 10px;
+}
+label {
+  display: block;
+  margin: 8px 0;
+}
+a {
+  color: inherit;
+}
+[hidden] {
+  display: none !important;
+}
+
+header strong {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  letter-spacing: -0.65px;
+}
+header img {
+  border-radius: 11px;
+}
+nav button[aria-current="true"] {
+  color: #0842a0;
+}
+.primary:hover {
+  background: #0842a0;
+}
+.numbers b {
+  font-variant-numeric: tabular-nums;
+}

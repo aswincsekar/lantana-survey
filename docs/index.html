@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Download the Android field pilot for offline Lantana surveys. Identify visible cover, record patches and revisit them after clearance.">
+  <meta name="theme-color" content="#f8faff">
+  <title>Lantana Survey · Android pilot</title>
+  <link rel="icon" href="./assets/vanarekha.png">
+  <link rel="stylesheet" href="./site.css">
+</head>
+<body>
+  <header><a class="project" href="./"><img src="./assets/vanarekha.png" width="38" height="38" alt="">Lantana Survey</a><a class="source" href="https://github.com/aswincsekar/lantana-survey">Source code</a></header>
+  <main>
+    <section class="intro" aria-labelledby="title">
+      <div class="lead">
+        <p class="version">Android field pilot <span>v0.1</span></p>
+        <h1 id="title">Map Lantana<br>in the field.</h1>
+        <p class="summary">Scan a thicket with your phone to highlight suspected Lantana, estimate visible cover, and save the patch for a return visit. Works offline.</p>
+        <a class="download" href="https://github.com/aswincsekar/lantana-survey/releases/download/v0.1.0-pilot/vanarekha-0.1-android.apk">Download Android APK</a>
+        <p class="requirements">Android 9 or later · Pilot build · <a href="https://github.com/aswincsekar/lantana-survey/releases/tag/v0.1.0-pilot">Release details</a></p>
+      </div>
+      <figure>
+        <div class="field-photo">
+          <input type="checkbox" id="mask" checked>
+          <div class="photo"><img src="./assets/wayanad.webp" width="800" height="600" alt="Lantana leaves and orange flower clusters photographed in Wayanad, India"><img class="overlay" src="./assets/wayanad-mask.png" alt="" aria-hidden="true"></div>
+          <label for="mask"><span class="switch" aria-hidden="true"></span>Show prediction</label>
+        </div>
+        <figcaption>Wayanad, Kerala · Model output on a training photograph</figcaption>
+      </figure>
+    </section>
+    <section class="instructions" aria-labelledby="first-scan">
+      <h2 id="first-scan">Your first survey</h2>
+      <div><h3>Open the pilot</h3><p>Install the APK and open <strong>Vanarekha</strong>. To try the model indoors, choose <strong>Connection → Test model on sample photo</strong>.</p></div>
+      <div><h3>Scan a patch</h3><p>Tap <strong>Scan a patch</strong> and move slowly along the edge for ten seconds. The phone saves the clearest view and its predicted cover.</p></div>
+      <div><h3>Return after clearance</h3><p>Open the saved visit and choose <strong>Rescan this patch</strong>. Use the previous photo to line up the next view.</p></div>
+    </section>
+    <p class="field-note">Species predictions are experimental. Review the outline in mixed vegetation. Biomass estimates await calibration against local harvest measurements.</p>
+  </main>
+  <footer>Photograph by Clockery, resized and shown with an optional model overlay. <a href="https://commons.wikimedia.org/wiki/File:Lantana_camara_Wayanad.JPG">Original photograph</a> · <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a></footer>
+</body>
+</html>

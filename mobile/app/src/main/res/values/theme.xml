@@ -1,0 +1,11 @@
+<resources>
+    <color name="brand_blue">#0B57D0</color>
+    <style name="SurveyTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorAccent">@color/brand_blue</item>
+        <item name="android:statusBarColor">#F8FAFF</item>
+        <item name="android:navigationBarColor">#F0F4FA</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">#F8FAFF</item>
+    </style>
+</resources>

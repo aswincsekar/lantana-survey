@@ -1,0 +1,22 @@
+# From the repository root: gcloud builds submit --config cloud/gcp/cloudbuild.yaml --substitutions ...
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -f, cloud/gcp/Dockerfile, -t, '${_IMAGE}', .]
+  - name: gcr.io/cloud-builders/docker
+    args: [push, '${_IMAGE}']
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - lantana-survey
+      - '--image=${_IMAGE}'
+      - '--region=${_REGION}'
+      - '--service-account=${_SERVICE_ACCOUNT}'
+      - '--set-env-vars=FIELD_BUCKET=${_BUCKET}'
+      - '--set-secrets=FIELD_TOKEN=${_TOKEN_SECRET}:latest'
+      - '--allow-unauthenticated'
+      - '--quiet'
+substitutions:
+  _REGION: asia-south1
+  _TOKEN_SECRET: lantana-field-token

@@ -1,0 +1,15 @@
+.gradle/
+.venv/
+__pycache__/
+build/
+local.properties
+*.keystore
+.ruff_cache/
+.DS_Store
+.env
+.env.*
+*.jks
+*.pem
+*.sqlite*
+*.tfstate*
+.terraform/

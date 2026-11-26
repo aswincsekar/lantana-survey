@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.atree.survey">
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <queries><package android:name="com.google.ar.core"/></queries>
+    <application android:label="Vanarekha" android:icon="@mipmap/vanarekha" android:roundIcon="@mipmap/vanarekha" android:allowBackup="false" android:usesCleartextTraffic="false" android:theme="@style/SurveyTheme">
+        <meta-data android:name="com.google.ar.core" android:value="optional"/>
+        <meta-data android:name="com.google.ar.core.min_apk_version" android:value="250210000"/>
+        <activity android:name=".FieldActivity" android:exported="true" android:screenOrientation="portrait">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+        </activity>
+        <service android:name=".UploadJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false"/>
+    </application>
+</manifest>

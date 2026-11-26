@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'"
+    />
+    <title>Vanarekha</title>
+    <link rel="stylesheet" href="field.css" />
+  </head>
+  <body>
+    <header>
+      <strong
+        ><img
+          src="vanarekha.png"
+          alt=""
+          width="36"
+          height="36"
+        />Vanarekha</strong
+      ><span>Lantana survey</span>
+    </header>
+    <main id="main"></main>
+    <nav id="nav">
+      <button id="journal">Field journal</button
+      ><button id="map">Patch map</button
+      ><button id="settings">Connection</button>
+    </nav>
+    <div role="status" id="notice"></div>
+    <script src="field.js"></script>
+  </body>
+</html>
